@@ -20,6 +20,7 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     NoSuchShadowRootException,
     TimeoutException,
+    JavascriptException,
 )
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -297,6 +298,8 @@ def complete_upload_form(
         _set_cover(driver, cover_path)
     if not skip_split_window:
         _remove_split_window(driver)
+    # Dismiss any overlays (tutorials, popups) that might block interactions
+    _dismiss_overlays(driver)
     _set_interactivity(driver, **kwargs)
     _set_description(driver, description)
     if visibility != "everyone":
@@ -349,6 +352,123 @@ def _change_to_upload_iframe(driver: WebDriver) -> None:
     )
     iframe = WebDriverWait(driver, config.explicit_wait).until(iframe_selector)
     driver.switch_to.frame(iframe)
+
+
+def _dismiss_overlays(driver: WebDriver) -> int:
+    """
+    Dismiss any overlays/modals that might block interactions.
+
+    This handles:
+    - React Joyride tutorial overlays
+    - Cookie consent popups
+    - Any other modal overlays
+
+    Parameters
+    ----------
+    driver : selenium.webdriver
+
+    Returns
+    -------
+    int
+        Number of overlays dismissed
+    """
+    dismissed = 0
+
+    # JavaScript to remove joyride overlay and any blocking elements
+    js_remove_overlays = """
+    (function() {
+        var removed = 0;
+
+        // Remove joyride overlay
+        var joyride = document.querySelector('div.react-joyride__overlay');
+        if (joyride) {
+            joyride.remove();
+            removed++;
+        }
+
+        // Remove joyride spotlight
+        var spotlight = document.querySelector('div.react-joyride__spotlight');
+        if (spotlight) {
+            spotlight.remove();
+            removed++;
+        }
+
+        // Remove joyride tooltip
+        var tooltip = document.querySelector('div[data-test-id="tooltip"]');
+        if (tooltip) {
+            tooltip.remove();
+            removed++;
+        }
+
+        // Remove any element with joyride in class
+        var joyrideElements = document.querySelectorAll('[class*="joyride"]');
+        joyrideElements.forEach(function(el) {
+            el.remove();
+            removed++;
+        });
+
+        // Remove modal backdrops
+        var backdrops = document.querySelectorAll('div[class*="backdrop"], div[class*="overlay"]');
+        backdrops.forEach(function(el) {
+            if (el.style.position === 'fixed' || el.style.position === 'absolute') {
+                if (el.style.zIndex > 100) {
+                    el.remove();
+                    removed++;
+                }
+            }
+        });
+
+        return removed;
+    })();
+    """
+
+    try:
+        result = driver.execute_script(js_remove_overlays)
+        if result and result > 0:
+            dismissed = result
+            logger.debug(green(f"Dismissed {dismissed} overlay(s) via JavaScript"))
+            time.sleep(0.5)  # Brief pause after removing overlays
+    except JavascriptException as e:
+        logger.debug(f"JavaScript overlay removal failed: {e}")
+    except Exception as e:
+        logger.debug(f"Overlay dismissal error: {e}")
+
+    # Also try clicking any visible close/skip buttons
+    close_selectors = [
+        'button[data-action="close"]',
+        'button[aria-label="Close"]',
+        'button[aria-label="Fermer"]',
+        'button[class*="skip"]',
+        'button[class*="Skip"]',
+        'span[class*="skip"]',
+    ]
+
+    for selector in close_selectors:
+        try:
+            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+            for elem in elements:
+                if elem.is_displayed() and elem.is_enabled():
+                    try:
+                        elem.click()
+                        dismissed += 1
+                        logger.debug(green(f"Clicked close button: {selector}"))
+                        time.sleep(0.3)
+                    except ElementClickInterceptedException:
+                        pass
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # Press Escape as a fallback
+    try:
+        body = driver.find_element(By.TAG_NAME, 'body')
+        body.send_keys(Keys.ESCAPE)
+        time.sleep(0.2)
+    except Exception:
+        pass
+
+    return dismissed
 
 
 def _set_description(driver: WebDriver, description: str) -> None:
