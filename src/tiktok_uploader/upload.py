@@ -640,6 +640,15 @@ def _remove_cookies_window(driver) -> None:
     driver : selenium.webdriver
     """
 
+    logger.debug(green("wait the page fully loaded and remove cookies window"))
+
+    WebDriverWait(driver, config.implicit_wait).until(
+        EC.text_to_be_present_in_element(
+            (By.TAG_NAME, "body"),
+            "complete"
+        )
+    )
+
     logger.debug(green("Removing cookies window"))
     cookies_banner = WebDriverWait(driver, config.implicit_wait).until(
         EC.presence_of_element_located(
