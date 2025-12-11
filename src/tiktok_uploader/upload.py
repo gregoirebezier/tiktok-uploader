@@ -433,6 +433,28 @@ def _dismiss_overlays(driver: WebDriver) -> int:
             }
         });
 
+        // Handle TikTok "Turn on automatic content checks?" modal
+        // Click the Cancel button or close icon to dismiss it
+        var tuxModal = document.querySelector('div.TUXModal.common-modal');
+        if (tuxModal) {
+            console.log('Found TUXModal, attempting to dismiss...');
+            // First try to click the Cancel button (neutral type)
+            var cancelBtn = tuxModal.querySelector('button[data-type="neutral"]');
+            if (cancelBtn) {
+                cancelBtn.click();
+                removed++;
+                console.log('Clicked Cancel button on TUXModal');
+            } else {
+                // Try close icon
+                var closeIcon = tuxModal.querySelector('.common-modal-close');
+                if (closeIcon) {
+                    closeIcon.click();
+                    removed++;
+                    console.log('Clicked close icon on TUXModal');
+                }
+            }
+        }
+
         return removed;
     })();
     """
