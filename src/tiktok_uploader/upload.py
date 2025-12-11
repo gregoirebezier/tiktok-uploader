@@ -681,44 +681,57 @@ def _remove_cookies_window(driver) -> None:
     driver : selenium.webdriver
     """
 
-    logger.debug(green("wait the page fully loaded and remove cookies window"))
+    logger.debug(green("Waiting for page to load and removing cookies window"))
 
-    WebDriverWait(driver, config.implicit_wait).until(
-        EC.text_to_be_present_in_element(
-            (By.TAG_NAME, "body"),
-            "complete"
-        )
-    )
-
-    logger.debug(green("Removing cookies window"))
-    cookies_banner = WebDriverWait(driver, config.implicit_wait).until(
-        EC.presence_of_element_located(
-            (By.TAG_NAME, config.selectors.upload.cookies_banner.banner)
-        )
-    )
-
+    # Wait for page to be ready (check document.readyState)
     try:
-        item = WebDriverWait(driver, config.implicit_wait).until(
-            EC.visibility_of(
-                cookies_banner.shadow_root.find_element(
-                    By.CSS_SELECTOR,
-                    config.selectors.upload.cookies_banner.button,
-                )
+        WebDriverWait(driver, config.implicit_wait).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+    except TimeoutException:
+        logger.debug("Page load timeout, proceeding anyway")
+
+    # Give the cookie banner time to appear
+    time.sleep(1)
+
+    logger.debug(green("Looking for cookies window"))
+
+    # Try to find and dismiss the cookies banner
+    try:
+        cookies_banner = WebDriverWait(driver, config.implicit_wait).until(
+            EC.presence_of_element_located(
+                (By.TAG_NAME, config.selectors.upload.cookies_banner.banner)
             )
         )
 
-        # Wait that the Decline all button is clickable
-        decline_button = WebDriverWait(driver, config.implicit_wait).until(
-            EC.element_to_be_clickable(item.find_elements(By.TAG_NAME, "button")[0])
-        )
-        decline_button.click()
+        try:
+            item = WebDriverWait(driver, config.implicit_wait).until(
+                EC.visibility_of(
+                    cookies_banner.shadow_root.find_element(
+                        By.CSS_SELECTOR,
+                        config.selectors.upload.cookies_banner.button,
+                    )
+                )
+            )
 
-    # If shadow root is not found, we remove it
-    except NoSuchShadowRootException:
-        driver.execute_script(
-            "document.querySelector(arguments[0]).remove()",
-            config.selectors.upload.cookies_banner.banner,
-        )
+            # Wait that the Decline all button is clickable
+            decline_button = WebDriverWait(driver, config.implicit_wait).until(
+                EC.element_to_be_clickable(item.find_elements(By.TAG_NAME, "button")[0])
+            )
+            decline_button.click()
+            logger.debug(green("Clicked decline button on cookie banner"))
+
+        # If shadow root is not found, we remove it via JS
+        except NoSuchShadowRootException:
+            driver.execute_script(
+                "document.querySelector(arguments[0]).remove()",
+                config.selectors.upload.cookies_banner.banner,
+            )
+            logger.debug(green("Removed cookie banner via JS"))
+
+    except TimeoutException:
+        # Cookie banner not found, which is fine
+        logger.debug("Cookie banner not found, proceeding")
 
 
 def _remove_split_window(driver: WebDriver) -> None:
