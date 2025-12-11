@@ -379,11 +379,12 @@ def _dismiss_overlays(driver: WebDriver) -> int:
     (function() {
         var removed = 0;
 
-        // Remove joyride overlay
+        // Remove joyride overlay (most important)
         var joyride = document.querySelector('div.react-joyride__overlay');
         if (joyride) {
             joyride.remove();
             removed++;
+            console.log('Removed joyride overlay');
         }
 
         // Remove joyride spotlight
@@ -400,18 +401,28 @@ def _dismiss_overlays(driver: WebDriver) -> int:
             removed++;
         }
 
-        // Remove any element with joyride in class
-        var joyrideElements = document.querySelectorAll('[class*="joyride"]');
+        // Remove any element with joyride in class (broad match)
+        var joyrideElements = document.querySelectorAll('[class*="joyride"], [class*="Joyride"]');
         joyrideElements.forEach(function(el) {
             el.remove();
             removed++;
         });
 
-        // Remove modal backdrops
-        var backdrops = document.querySelectorAll('div[class*="backdrop"], div[class*="overlay"]');
+        // Also try to find and click any "Skip" or "Got it" buttons in tutorials
+        var skipButtons = document.querySelectorAll('button[class*="skip"], button[class*="Skip"], button:contains("Skip"), button:contains("Got it")');
+        skipButtons.forEach(function(btn) {
+            try { btn.click(); removed++; } catch(e) {}
+        });
+
+        // Remove modal backdrops with high z-index (fixed comparison - parseInt for string)
+        var backdrops = document.querySelectorAll('div[class*="backdrop"], div[class*="overlay"], div[class*="modal"]');
         backdrops.forEach(function(el) {
-            if (el.style.position === 'fixed' || el.style.position === 'absolute') {
-                if (el.style.zIndex > 100) {
+            var style = window.getComputedStyle(el);
+            var position = style.position;
+            var zIndex = parseInt(style.zIndex) || 0;
+            if ((position === 'fixed' || position === 'absolute') && zIndex > 100) {
+                // Don't remove the main app container
+                if (!el.id || (el.id !== 'root' && el.id !== 'app')) {
                     el.remove();
                     removed++;
                 }
@@ -498,7 +509,26 @@ def _set_description(driver: WebDriver, description: str) -> None:
 
     desc = driver.find_element(By.XPATH, config.selectors.upload.description)
 
-    desc.click()
+    # Dismiss any overlays that may have appeared (tutorials, popups)
+    # The joyride tutorial can appear after video processing
+    _dismiss_overlays(driver)
+    time.sleep(0.5)  # Brief pause after overlay dismissal
+
+    # Try to click with retry on intercepted click
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            desc.click()
+            break
+        except ElementClickInterceptedException as e:
+            logger.debug(f"Click intercepted (attempt {attempt + 1}/{max_retries}), dismissing overlays...")
+            _dismiss_overlays(driver)
+            time.sleep(0.5)
+            if attempt == max_retries - 1:
+                # Last attempt: try JavaScript click as fallback
+                logger.debug("Using JavaScript click as fallback")
+                driver.execute_script("arguments[0].click();", desc)
+                break
 
     # desc populates with filename before clearing
     WebDriverWait(driver, config.explicit_wait).until(lambda driver: desc.text != "")
@@ -508,7 +538,18 @@ def _set_description(driver: WebDriver, description: str) -> None:
 
     WebDriverWait(driver, config.explicit_wait).until(lambda driver: desc.text == "")
 
-    desc.click()
+    # Second click with retry for overlay interception
+    for attempt in range(3):
+        try:
+            desc.click()
+            break
+        except ElementClickInterceptedException:
+            logger.debug(f"Second click intercepted (attempt {attempt + 1}/3), dismissing overlays...")
+            _dismiss_overlays(driver)
+            time.sleep(0.5)
+            if attempt == 2:
+                driver.execute_script("arguments[0].click();", desc)
+                break
 
     time.sleep(1)
 
