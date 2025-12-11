@@ -409,9 +409,13 @@ def _dismiss_overlays(driver: WebDriver) -> int:
         });
 
         // Also try to find and click any "Skip" or "Got it" buttons in tutorials
-        var skipButtons = document.querySelectorAll('button[class*="skip"], button[class*="Skip"], button:contains("Skip"), button:contains("Got it")');
-        skipButtons.forEach(function(btn) {
-            try { btn.click(); removed++; } catch(e) {}
+        // Note: :contains() is not valid CSS, we use XPath-like text matching via JS
+        var allButtons = document.querySelectorAll('button');
+        allButtons.forEach(function(btn) {
+            var text = btn.textContent || btn.innerText || '';
+            if (text.toLowerCase().includes('skip') || text.toLowerCase().includes('got it')) {
+                try { btn.click(); removed++; } catch(e) {}
+            }
         });
 
         // Remove modal backdrops with high z-index (fixed comparison - parseInt for string)
