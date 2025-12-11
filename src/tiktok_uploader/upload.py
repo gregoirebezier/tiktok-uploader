@@ -507,11 +507,43 @@ def _set_description(driver: WebDriver, description: str) -> None:
 
     saved_description = description  # save the description in case it fails
 
-    WebDriverWait(driver, config.implicit_wait).until(
-        EC.presence_of_element_located((By.XPATH, config.selectors.upload.description))
-    )
+    # Wait longer for description field - it may take time to appear after video processing
+    # Use explicit_wait instead of implicit_wait for more time
+    try:
+        WebDriverWait(driver, config.explicit_wait).until(
+            EC.presence_of_element_located((By.XPATH, config.selectors.upload.description))
+        )
+    except TimeoutException:
+        # Try alternative selector for TikTok Studio
+        logger.debug("Primary description selector not found, trying alternative...")
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'DraftEditor-content')]"))
+            )
+        except TimeoutException:
+            logger.error("Could not find description field with any selector")
+            raise
 
-    desc = driver.find_element(By.XPATH, config.selectors.upload.description)
+    # Try multiple selectors to find the description field
+    desc = None
+    selectors = [
+        config.selectors.upload.description,
+        "//div[contains(@class, 'DraftEditor-content')]",
+        "//div[@contenteditable='true' and @role='combobox']",
+        "//div[@contenteditable='true'][contains(@class, 'public-DraftEditor')]",
+    ]
+    for selector in selectors:
+        try:
+            desc = driver.find_element(By.XPATH, selector)
+            if desc:
+                logger.debug(f"Found description field with selector: {selector}")
+                break
+        except NoSuchElementException:
+            continue
+
+    if not desc:
+        logger.error("Could not find description field")
+        raise NoSuchElementException("Description field not found")
 
     # Dismiss any overlays that may have appeared (tutorials, popups)
     # The joyride tutorial can appear after video processing
