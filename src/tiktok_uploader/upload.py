@@ -308,6 +308,14 @@ def complete_upload_form(
         _set_schedule_video(driver, schedule)
     if product_id:
         _add_product_link(driver, product_id)
+
+    # Check for content restrictions before posting
+    if _check_content_restriction(driver):
+        raise ContentRestrictedError(
+            "Content was flagged as restricted by TikTok. "
+            "The video was not posted to avoid potential visibility issues."
+        )
+
     _post_video(driver)
 
 
@@ -379,12 +387,11 @@ def _dismiss_overlays(driver: WebDriver) -> int:
     (function() {
         var removed = 0;
 
-        // Remove joyride overlay (most important)
+        // Remove joyride overlay
         var joyride = document.querySelector('div.react-joyride__overlay');
         if (joyride) {
             joyride.remove();
             removed++;
-            console.log('Removed joyride overlay');
         }
 
         // Remove joyride spotlight
@@ -401,59 +408,23 @@ def _dismiss_overlays(driver: WebDriver) -> int:
             removed++;
         }
 
-        // Remove any element with joyride in class (broad match)
-        var joyrideElements = document.querySelectorAll('[class*="joyride"], [class*="Joyride"]');
+        // Remove any element with joyride in class
+        var joyrideElements = document.querySelectorAll('[class*="joyride"]');
         joyrideElements.forEach(function(el) {
             el.remove();
             removed++;
         });
 
-        // Also try to find and click any "Skip" or "Got it" buttons in tutorials
-        // Note: :contains() is not valid CSS, we use XPath-like text matching via JS
-        var allButtons = document.querySelectorAll('button');
-        allButtons.forEach(function(btn) {
-            var text = btn.textContent || btn.innerText || '';
-            if (text.toLowerCase().includes('skip') || text.toLowerCase().includes('got it')) {
-                try { btn.click(); removed++; } catch(e) {}
-            }
-        });
-
-        // Remove modal backdrops with high z-index (fixed comparison - parseInt for string)
-        var backdrops = document.querySelectorAll('div[class*="backdrop"], div[class*="overlay"], div[class*="modal"]');
+        // Remove modal backdrops
+        var backdrops = document.querySelectorAll('div[class*="backdrop"], div[class*="overlay"]');
         backdrops.forEach(function(el) {
-            var style = window.getComputedStyle(el);
-            var position = style.position;
-            var zIndex = parseInt(style.zIndex) || 0;
-            if ((position === 'fixed' || position === 'absolute') && zIndex > 100) {
-                // Don't remove the main app container
-                if (!el.id || (el.id !== 'root' && el.id !== 'app')) {
+            if (el.style.position === 'fixed' || el.style.position === 'absolute') {
+                if (el.style.zIndex > 100) {
                     el.remove();
                     removed++;
                 }
             }
         });
-
-        // Handle TikTok "Turn on automatic content checks?" modal
-        // Click the Cancel button or close icon to dismiss it
-        var tuxModal = document.querySelector('div.TUXModal.common-modal');
-        if (tuxModal) {
-            console.log('Found TUXModal, attempting to dismiss...');
-            // First try to click the Cancel button (neutral type)
-            var cancelBtn = tuxModal.querySelector('button[data-type="neutral"]');
-            if (cancelBtn) {
-                cancelBtn.click();
-                removed++;
-                console.log('Clicked Cancel button on TUXModal');
-            } else {
-                // Try close icon
-                var closeIcon = tuxModal.querySelector('.common-modal-close');
-                if (closeIcon) {
-                    closeIcon.click();
-                    removed++;
-                    console.log('Clicked close icon on TUXModal');
-                }
-            }
-        }
 
         return removed;
     })();
@@ -529,64 +500,13 @@ def _set_description(driver: WebDriver, description: str) -> None:
 
     saved_description = description  # save the description in case it fails
 
-    # Wait longer for description field - it may take time to appear after video processing
-    # Use explicit_wait instead of implicit_wait for more time
-    try:
-        WebDriverWait(driver, config.explicit_wait).until(
-            EC.presence_of_element_located((By.XPATH, config.selectors.upload.description))
-        )
-    except TimeoutException:
-        # Try alternative selector for TikTok Studio
-        logger.debug("Primary description selector not found, trying alternative...")
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'DraftEditor-content')]"))
-            )
-        except TimeoutException:
-            logger.error("Could not find description field with any selector")
-            raise
+    WebDriverWait(driver, config.implicit_wait).until(
+        EC.presence_of_element_located((By.XPATH, config.selectors.upload.description))
+    )
 
-    # Try multiple selectors to find the description field
-    desc = None
-    selectors = [
-        config.selectors.upload.description,
-        "//div[contains(@class, 'DraftEditor-content')]",
-        "//div[@contenteditable='true' and @role='combobox']",
-        "//div[@contenteditable='true'][contains(@class, 'public-DraftEditor')]",
-    ]
-    for selector in selectors:
-        try:
-            desc = driver.find_element(By.XPATH, selector)
-            if desc:
-                logger.debug(f"Found description field with selector: {selector}")
-                break
-        except NoSuchElementException:
-            continue
+    desc = driver.find_element(By.XPATH, config.selectors.upload.description)
 
-    if not desc:
-        logger.error("Could not find description field")
-        raise NoSuchElementException("Description field not found")
-
-    # Dismiss any overlays that may have appeared (tutorials, popups)
-    # The joyride tutorial can appear after video processing
-    _dismiss_overlays(driver)
-    time.sleep(0.5)  # Brief pause after overlay dismissal
-
-    # Try to click with retry on intercepted click
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            desc.click()
-            break
-        except ElementClickInterceptedException as e:
-            logger.debug(f"Click intercepted (attempt {attempt + 1}/{max_retries}), dismissing overlays...")
-            _dismiss_overlays(driver)
-            time.sleep(0.5)
-            if attempt == max_retries - 1:
-                # Last attempt: try JavaScript click as fallback
-                logger.debug("Using JavaScript click as fallback")
-                driver.execute_script("arguments[0].click();", desc)
-                break
+    desc.click()
 
     # desc populates with filename before clearing
     WebDriverWait(driver, config.explicit_wait).until(lambda driver: desc.text != "")
@@ -596,18 +516,7 @@ def _set_description(driver: WebDriver, description: str) -> None:
 
     WebDriverWait(driver, config.explicit_wait).until(lambda driver: desc.text == "")
 
-    # Second click with retry for overlay interception
-    for attempt in range(3):
-        try:
-            desc.click()
-            break
-        except ElementClickInterceptedException:
-            logger.debug(f"Second click intercepted (attempt {attempt + 1}/3), dismissing overlays...")
-            _dismiss_overlays(driver)
-            time.sleep(0.5)
-            if attempt == 2:
-                driver.execute_script("arguments[0].click();", desc)
-                break
+    desc.click()
 
     time.sleep(1)
 
@@ -739,57 +648,35 @@ def _remove_cookies_window(driver) -> None:
     driver : selenium.webdriver
     """
 
-    logger.debug(green("Waiting for page to load and removing cookies window"))
-
-    # Wait for page to be ready (check document.readyState)
-    try:
-        WebDriverWait(driver, config.implicit_wait).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
+    logger.debug(green("Removing cookies window"))
+    cookies_banner = WebDriverWait(driver, config.implicit_wait).until(
+        EC.presence_of_element_located(
+            (By.TAG_NAME, config.selectors.upload.cookies_banner.banner)
         )
-    except TimeoutException:
-        logger.debug("Page load timeout, proceeding anyway")
+    )
 
-    # Give the cookie banner time to appear
-    time.sleep(1)
-
-    logger.debug(green("Looking for cookies window"))
-
-    # Try to find and dismiss the cookies banner
     try:
-        cookies_banner = WebDriverWait(driver, config.implicit_wait).until(
-            EC.presence_of_element_located(
-                (By.TAG_NAME, config.selectors.upload.cookies_banner.banner)
-            )
-        )
-
-        try:
-            item = WebDriverWait(driver, config.implicit_wait).until(
-                EC.visibility_of(
-                    cookies_banner.shadow_root.find_element(
-                        By.CSS_SELECTOR,
-                        config.selectors.upload.cookies_banner.button,
-                    )
+        item = WebDriverWait(driver, config.implicit_wait).until(
+            EC.visibility_of(
+                cookies_banner.shadow_root.find_element(
+                    By.CSS_SELECTOR,
+                    config.selectors.upload.cookies_banner.button,
                 )
             )
+        )
 
-            # Wait that the Decline all button is clickable
-            decline_button = WebDriverWait(driver, config.implicit_wait).until(
-                EC.element_to_be_clickable(item.find_elements(By.TAG_NAME, "button")[0])
-            )
-            decline_button.click()
-            logger.debug(green("Clicked decline button on cookie banner"))
+        # Wait that the Decline all button is clickable
+        decline_button = WebDriverWait(driver, config.implicit_wait).until(
+            EC.element_to_be_clickable(item.find_elements(By.TAG_NAME, "button")[0])
+        )
+        decline_button.click()
 
-        # If shadow root is not found, we remove it via JS
-        except NoSuchShadowRootException:
-            driver.execute_script(
-                "document.querySelector(arguments[0]).remove()",
-                config.selectors.upload.cookies_banner.banner,
-            )
-            logger.debug(green("Removed cookie banner via JS"))
-
-    except TimeoutException:
-        # Cookie banner not found, which is fine
-        logger.debug("Cookie banner not found, proceeding")
+    # If shadow root is not found, we remove it
+    except NoSuchShadowRootException:
+        driver.execute_script(
+            "document.querySelector(arguments[0]).remove()",
+            config.selectors.upload.cookies_banner.banner,
+        )
 
 
 def _remove_split_window(driver: WebDriver) -> None:
@@ -1068,6 +955,53 @@ def __verify_time_picked_is_correct(driver: WebDriver, hour: int, minute: int) -
         raise Exception(msg)
 
 
+def _check_content_restriction(driver: WebDriver) -> bool:
+    """
+    Check if content is flagged as restricted by TikTok's content check.
+
+    Parameters
+    ----------
+    driver : selenium.webdriver
+
+    Returns
+    -------
+    bool
+        True if content is restricted (should NOT post), False otherwise
+    """
+    logger.debug(green("Checking for content restrictions..."))
+
+    try:
+        # Look for the status-warn div with data-show="true"
+        warn_element = driver.find_element(
+            By.CSS_SELECTOR,
+            config.selectors.upload.content_restriction
+        )
+        if warn_element and warn_element.is_displayed():
+            warn_text = warn_element.text
+            logger.warning(red(f"Content restriction detected: {warn_text[:100]}..."))
+            return True
+    except NoSuchElementException:
+        pass
+    except Exception as e:
+        logger.debug(f"Error checking content restriction: {e}")
+
+    # Also check for the danger text indicating restriction
+    try:
+        danger_elements = driver.find_elements(
+            By.XPATH,
+            "//*[contains(text(), 'Content may be restricted')]"
+        )
+        for el in danger_elements:
+            if el.is_displayed():
+                logger.warning(red("Content restriction detected via text!"))
+                return True
+    except Exception:
+        pass
+
+    logger.debug(green("No content restrictions found"))
+    return False
+
+
 def _post_video(driver: WebDriver) -> None:
     """
     Posts the video by clicking the post button
@@ -1312,6 +1246,16 @@ class FailedToUpload(Exception):
     """
 
     def __init__(self, message=None):
+        super().__init__(message or self.__doc__)
+
+
+class ContentRestrictedError(Exception):
+    """
+    Content was flagged as restricted by TikTok's content check.
+    The video was not posted to avoid potential visibility issues.
+    """
+
+    def __init__(self, message: str | None = None):
         super().__init__(message or self.__doc__)
 
 

@@ -59,9 +59,10 @@ user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 	duet = "//label[.='Duet']/following-sibling::div/input"
 	stitch = "//label[.='Stitch']/following-sibling::div/input"
 
-	post = "//button[@data-e2e='post_video_button']"
-	post_now = "//button[.//div[text()='Post now']]"
-	post_confirmation = "//div[contains(text(), 'Your video has been uploaded') or contains(text(), '视频已发布') or contains(text(), 'Video published')]"
+	post = "//button[.//span[text()='Post'] or .//div[text()='Post']]"
+	post_now = "//div[contains(@class, 'TUXModal')]//button[contains(@class, 'TUXButton--primary')]"
+	post_confirmation = "//div[contains(text(), 'Your video has been uploaded') or contains(text(), '视频已发布') or contains(text(), 'Video published') or contains(text(), 'Your video is being uploaded')]"
+	content_restriction = "div.status-warn[data-show='true']"
 
 
 	[selectors.schedule]

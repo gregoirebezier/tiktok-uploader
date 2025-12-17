@@ -83,6 +83,7 @@ class UploadSelectors(StrictModel):
     post: str
     post_now: str
     post_confirmation: str
+    content_restriction: str  # CSS selector for content restriction warning
 
     cookies_banner: CookiesBanner
 
